@@ -83,8 +83,8 @@ class dataframe_optimizer:
 		print('==========================================================================')
 		print("New Input params: \n", new_input_params)
 		df_reader.reset_param(new_input_params, parallel)
-		info = df_reader.parse_df_information()
 		if show_info is True:
+			info = df_reader.parse_df_information() # info is parsed only if we need to print!
 			dataframe_property_handler.print_info(info)
 			
 		return new_input_params
@@ -105,7 +105,13 @@ class base_dataframe_reader:
 	def __init__(self):
 		pass
 	
-	def get_optimal_df_params(self):
+	def reset_param(self):
+		pass
+		
+	def get_dataframe(self):
+		pass
+		
+	def parse_df_information(self):
 		pass
 		
 		
