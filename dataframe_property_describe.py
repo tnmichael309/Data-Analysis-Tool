@@ -125,6 +125,7 @@ class dataframe_reader(base_dataframe_reader):
 			
 		return df
 	
+	# parse what need to be run all over the data with
 	def get_df_basic_information(self, df):
 		ret = dataframe_property_handler.get_empty_df_information_dict()
 		ret['total_row'] = df.shape[0]
@@ -133,14 +134,9 @@ class dataframe_reader(base_dataframe_reader):
 		null_counts_info = df.select_dtypes(include=['float']).isnull().sum()
 		return ret, null_counts_info
 		
-	# parse what need to be run all over the data with
-	def parse_df_basic_information(self):
-		df = self.get_dataframe()
-		return self.get_df_basic_information(df)
 	
-	def parse_df_basic_information_parallel(self):
+	def get_df_basic_information_parallel(self, df):
 	
-		df = self.get_dataframe()
 		df_split = np.array_split(df, self.cpu_count)
 		
 		ret = dataframe_property_handler.get_empty_df_information_dict()
@@ -157,23 +153,24 @@ class dataframe_reader(base_dataframe_reader):
 		print('Multiprocessing failed')	
 		return None, None
 		
+	# interface for call from outside
 	def parse_df_information(self):
-	
 		df = self.get_dataframe()
-
+		return self.process_df_information(df)
+		
+	def process_df_information(self, df):
+	
 		if self.parallel == False:
-			ret, null_counts_info = self.parse_df_basic_information() 
+			ret, null_counts_info = self.get_df_basic_information(df) 
 			
 			for col in df.columns:	
 				ret['col_info'][col] = self.process_col_information(df, col, null_counts_info, ret['total_row'])
 			return ret
 		else:
-			ret, null_counts_info = self.parse_df_basic_information_parallel() 
+			ret, null_counts_info = self.get_df_basic_information_parallel(df) 
 			with concurrent.futures.ProcessPoolExecutor(max_workers=self.cpu_count) as executor:
 				packed_args = ((df, col, null_counts_info, ret['total_row']) for col in df.columns)
 				res = list(executor.map(self.process_col_information_packed, packed_args, chunksize = 20000))
-				print(len(res))
-				print(res)
 				for i, col in enumerate(df.columns):
 					ret['col_info'][col] = res[i]
 				
@@ -216,6 +213,10 @@ class dataframe_chunk_reader(dataframe_reader):
 		super(dataframe_chunk_reader, self).__init__(input_params, parallel)
 		self.chunksize = chunksize
 	
+	# when we try to use chunk to read, 
+	# it meas the file is really big
+	# parallelization maynot suit in the memory_usage
+	# and event reading a file, we cannot use multiprocessing
 	def parse_df_information(self):
 		chunk_iter = pd.read_csv(
 			self.input_params['filename'], 
@@ -225,11 +226,33 @@ class dataframe_chunk_reader(dataframe_reader):
 			parse_dates = self.input_params['parse_dates'],
 			dtype = self.input_params['cat_dtype'])
 		
+		res = []
 		for chunk in chunk_iter:
 			# sw workaround for float->int specification
 			for col, type_str in self.input_params['numerical_dtype'].items():
 				chunk[col] = chunk[col].astype(type_str)
 				
-			dataframe_reader.parse(chunk)
+			res.append(self.process_df_information(chunk))
 		
+		# merge result and return
+		return dataframe_property_handler.merge_df_information_dict(res)
+		
+	def process_col_information(self, df, col, null_counts_info, total_rows):
 
+		temp_col_info = {}
+		temp_col_info['dtype'] = df[col].dtype.name # current data type
+
+		if col in null_counts_info:
+			if null_counts_info[col] == 0: # no null value, can be tranformed to int, then cast to most compact type
+				temp_col_info['numerical_dtype'] = pd.to_numeric(df[col].astype('int'), downcast='integer').dtype.name
+			else:
+				temp_col_info['numerical_dtype'] = pd.to_numeric(df[col], downcast='float').dtype.name
+		else:
+			temp_col_info['numerical_dtype'] = None
+	
+		if df[col].dtype.name == 'object':
+			temp_col_info['is_to_cat'] = df[col].unique()
+		else:
+			temp_col_info['is_to_cat'] = None
+			
+		return temp_col_info 

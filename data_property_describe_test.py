@@ -21,18 +21,19 @@ def parallel_normal_test():
 	d.optimize(show_info = True, parallel = True)
 	
 def chunk_test():		
-	pass			
+	d = dataframe_optimizer(filename='moma.csv', encoding='utf-8', del_cols = del_cols, parse_dates = to_date_cols)
+	d.optimize(show_info = True, chunksize = 5000)			
 
 def parallel_chunk_test():
-	pass
+	d = dataframe_optimizer(filename='moma.csv', encoding='utf-8', del_cols = del_cols, parse_dates = to_date_cols)
+	d.optimize(show_info = True, parallel = True, chunksize = 5000)
 
 
 if __name__ == '__main__':
-	#use_times['normal test'] = timeit.timeit('normal_test()', number=1, globals=globals())
+	use_times['normal test'] = timeit.timeit('normal_test()', number=1, globals=globals())
 	use_times['parallel normal test'] = timeit.timeit('parallel_normal_test()', number=1, globals=globals())
-	#use_times['chunk test'] = timeit.timeit('chunk_test()', number=1, globals=globals())
-	#use_times['parallel chunk test'] = timeit.timeit('parallel_chunk_test()', number=1, globals=globals())
-	#chunk_reuse_test()	
+	use_times['chunk test'] = timeit.timeit('chunk_test()', number=1, globals=globals())
+	use_times['parallel chunk test'] = timeit.timeit('parallel_chunk_test()', number=1, globals=globals())
 
 	for k,v in use_times.items():
 		print(k, '\n', v, '\n')

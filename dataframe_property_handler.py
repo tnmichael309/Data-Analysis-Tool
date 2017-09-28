@@ -1,3 +1,5 @@
+import numpy as np
+
 '''
 	df information
 	
@@ -17,7 +19,6 @@
 		}
 	}
 '''
-
 class dataframe_property_handler:
 	def __init__(self):
 		pass
@@ -45,3 +46,58 @@ class dataframe_property_handler:
 		
 		return ret
 	
+	@staticmethod
+	def merge_df_information_dict(list_of_dicts):
+		ret = dataframe_property_handler.get_empty_df_information_dict()
+		
+		for dict in list_of_dicts:
+			ret['total_row'] += dict['total_row']
+			ret['total_mem'] += dict['total_mem']
+			
+			for col, col_dict in dict['col_info'].items():
+				if col not in ret['col_info']:
+					ret['col_info'][col] = col_dict
+				else:
+					ret_dtype = ret['col_info'][col]['dtype']
+					ret_numerical_dtype = ret['col_info'][col]['numerical_dtype']
+					ret_unique_values = ret['col_info'][col]['is_to_cat']
+		
+					check_dtype = col_dict['dtype']
+					check_numerical_dtype = col_dict['numerical_dtype']
+					check_unique_values = col_dict['is_to_cat']
+					
+					if (ret_dtype == 'float64' and check_dtype == 'float64' 
+						and np.dtype(check_numerical_dtype).itemsize > np.dtype(ret_numerical_dtype).itemsize):
+						ret_numerical_dtype = check_numerical_dtype
+					
+					if (check_dtype == 'object'):
+						if ret_unique_values is None:
+							ret_unique_values = check_unique_values
+						else:
+							if type('ret_unique_values') != type([]):
+								ret_unique_values = list(ret_unique_values)
+							ret_unique_values.extend(list(check_unique_values))
+							ret_unique_values = list(np.unique(ret_unique_values))
+						
+		for col, col_dict in ret['col_info'].items():
+			if col_dict['is_to_cat'] is None:
+				pass
+			elif len(col_dict['is_to_cat']) / ret['total_row'] >= .5:
+				col_dict['is_to_cat'] = False
+			else:
+				col_dict['is_to_cat'] = True
+						
+		return ret			
+						
+
+						
+						
+						
+						
+						
+						
+						
+						
+						
+						
+						
