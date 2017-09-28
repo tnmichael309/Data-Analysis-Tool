@@ -89,12 +89,7 @@ class dataframe_property_handler:
 						
 		return ret			
 						
-
-						
-						
-						
-						
-						
+	
 						
 						
 						

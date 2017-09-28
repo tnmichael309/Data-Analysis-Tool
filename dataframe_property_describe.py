@@ -1,12 +1,13 @@
 import numpy as np
 import pandas as pd
 import concurrent.futures
-import multiprocessing
 import math
 import copy
 from itertools import repeat
+import pickle
 
 from dataframe_property_handler import dataframe_property_handler
+from dataframe_parallel_manager import df_parall_manager
 
 class dataframe_optimizer:
 	def __init__(self, **kwargs):
@@ -14,30 +15,31 @@ class dataframe_optimizer:
 		
 	def reset(self, **kwargs):
 		self.input_params = {};
+		
+		if 'filename' not in kwargs or 'encoding' not in kwargs:
+			raise ValueError('Filename and Encoding must be provided!')
+			
 		self.input_params['filename'] = kwargs.pop('filename')
 		self.input_params['encoding'] = kwargs.pop('encoding')	
-		
-		if self.input_params['filename'] is None or self.input_params['encoding'] is None:
-			raise ValueError('filename and encoding must be provided at least')
-			
+	
 		df = self.get_peek_dataframe()
 		
 		self.input_params['usecols'] = list(df.columns.values)
 		
-		del_cols = kwargs.pop('del_cols')
-		if del_cols is not None:
+		if 'del_cols' in kwargs:
+			del_cols = kwargs.pop('del_cols')
 			for col in del_cols:
 				self.input_params['usecols'].remove(col)
 		
 		self.input_params['parse_dates'] = []
-		to_date_cols = kwargs.pop('parse_dates')
-		if to_date_cols is not None:
+		if 'parse_dates' in kwargs:
+			to_date_cols = kwargs.pop('parse_dates')
 			for col in to_date_cols:
 				if col in self.input_params['usecols']:
 					self.input_params['parse_dates'].append(col)
 					
 		self.input_params['numerical_dtype'] = {}
-		self.input_params['cat_dtype'] = None	
+		self.input_params['cat_dtype'] = {}	
 		
 		
 	def get_peek_dataframe(self, nrows=5):
@@ -71,8 +73,6 @@ class dataframe_optimizer:
 		col_info = info['col_info']
 		for col in col_info:
 			if col_info[col]['dtype'] == 'object' and col_info[col]['is_to_cat'] is True:
-				if new_input_params['cat_dtype'] is None:
-					new_input_params['cat_dtype'] = {}
 				new_input_params['cat_dtype'][col] = 'category'
 				
 			if col_info[col]['dtype'] == 'float64':
@@ -89,7 +89,18 @@ class dataframe_optimizer:
 			
 		return new_input_params
 
-
+	@staticmethod
+	def dump_dataframe_params(input_params, filename):
+		pickle.dump(input_params, open(filename,'wb'))
+		print('Dataframe info is dumped into file: ', filename)				
+	
+	@staticmethod	
+	def load_dataframe_params(filename):
+		input_params = pickle.load(open(filename, 'rb'))
+		print('Dataframe info is loaded from file: ', filename)						
+		return input_params
+	
+	
 class base_dataframe_reader:
 	def __init__(self):
 		pass
@@ -108,8 +119,7 @@ class dataframe_reader(base_dataframe_reader):
 		self.parallel = parallel
 		
 		if self.parallel is True:
-			self.cpu_count = multiprocessing.cpu_count() - 1
-			print("Using CPU # = ", self.cpu_count)
+			print("Using CPU # = ", df_parall_manager.get_cpu_count())
 			
 	def get_dataframe(self):
 		df = pd.read_csv(
@@ -137,10 +147,10 @@ class dataframe_reader(base_dataframe_reader):
 	
 	def get_df_basic_information_parallel(self, df):
 	
-		df_split = np.array_split(df, self.cpu_count)
+		df_split = np.array_split(df, df_parall_manager.get_cpu_count())
 		
 		ret = dataframe_property_handler.get_empty_df_information_dict()
-		with concurrent.futures.ProcessPoolExecutor(max_workers=self.cpu_count) as executor:
+		with concurrent.futures.ProcessPoolExecutor(max_workers=df_parall_manager.get_cpu_count()) as executor:
 			res = executor.map(self.get_df_basic_information, df_split)
 			res = list(res)
 			
@@ -168,7 +178,7 @@ class dataframe_reader(base_dataframe_reader):
 			return ret
 		else:
 			ret, null_counts_info = self.get_df_basic_information_parallel(df) 
-			with concurrent.futures.ProcessPoolExecutor(max_workers=self.cpu_count) as executor:
+			with concurrent.futures.ProcessPoolExecutor(max_workers=df_parall_manager.get_cpu_count()) as executor:
 				packed_args = ((df, col, null_counts_info, ret['total_row']) for col in df.columns)
 				res = list(executor.map(self.process_col_information_packed, packed_args, chunksize = 20000))
 				for i, col in enumerate(df.columns):
@@ -207,17 +217,12 @@ class dataframe_reader(base_dataframe_reader):
 		
 		return temp_col_info
 		
-		
 class dataframe_chunk_reader(dataframe_reader):
 	def __init__(self, input_params, chunksize, parallel):
 		super(dataframe_chunk_reader, self).__init__(input_params, parallel)
 		self.chunksize = chunksize
 	
-	# when we try to use chunk to read, 
-	# it meas the file is really big
-	# parallelization maynot suit in the memory_usage
-	# and event reading a file, we cannot use multiprocessing
-	def parse_df_information(self):
+	def get_dataframe(self):
 		chunk_iter = pd.read_csv(
 			self.input_params['filename'], 
 			encoding = self.input_params['encoding'],
@@ -225,6 +230,15 @@ class dataframe_chunk_reader(dataframe_reader):
 			usecols = self.input_params['usecols'],
 			parse_dates = self.input_params['parse_dates'],
 			dtype = self.input_params['cat_dtype'])
+		
+		return chunk_iter
+		
+	# when we try to use chunk to read, 
+	# it meas the file is really big
+	# parallelization maynot suit in the memory_usage
+	# and event reading a file, we cannot use multiprocessing
+	def parse_df_information(self):
+		chunk_iter = self.get_dataframe()
 		
 		res = []
 		for chunk in chunk_iter:
