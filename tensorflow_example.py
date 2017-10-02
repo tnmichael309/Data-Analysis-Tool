@@ -259,7 +259,7 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
     ### START CODE HERE ### (1 line)
     global_step = tf.Variable(0, trainable=False)
     online_learning_rate = tf.train.exponential_decay(learning_rate, global_step,
-                                           100000, 0.98, staircase=True)
+                                           10000, 0.95, staircase=True)
     
     # Note: when training, the moving_mean and moving_variance need to be updated. 
     # By default the update ops are placed in tf.GraphKeys.UPDATE_OPS, 
@@ -302,7 +302,7 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
             # Print the cost every epoch
             if print_cost == True and epoch % 100 == 0:
                 print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
-            if print_cost == True and epoch % 5 == 0 and epoch != 0:
+            if print_cost == True and epoch % 5 == 0 and epoch > 300:
                 costs.append(epoch_cost)
                 
         # plot the cost
@@ -313,8 +313,8 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
         plt.show()
 
         # lets save the parameters in a variable
-        parameters = sess.run(parameters)
-        print ("Parameters have been trained!")
+        # parameters = sess.run(parameters)
+        # print ("Parameters have been trained!")
 
         # Calculate the correct predictions
         rmse = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(Y, output))))
@@ -325,4 +325,4 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
         print ("Train RMSE:", rmse.eval({X: X_train, Y: Y_train}))
         #print ("Test RMSE:", rmse.eval({X: X_test, Y: Y_test}))
         
-        return parameters
+        #return parameters
