@@ -1,4 +1,5 @@
 import math
+from time import time
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
@@ -112,7 +113,7 @@ def batch_norm(x, n_out, phase_train):
         gamma = tf.Variable(tf.constant(1.0, shape=[n_out]),
                                       name='gamma', trainable=True)
         batch_mean, batch_var = tf.nn.moments(x, [0], name='moments')
-        ema = tf.train.ExponentialMovingAverage(decay=0.5)
+        ema = tf.train.ExponentialMovingAverage(decay=0.9)
 
         def mean_var_with_update():
             ema_apply_op = ema.apply([batch_mean, batch_var])
@@ -274,6 +275,9 @@ def model(X_train, Y_train,
     # Calculate accuracy on the test set
     rmse = tf.cast(rmse, "float")
     
+    # add for time usage prediction
+    start_time = 0
+    
     # Start the session to compute the tensorflow graph
     with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
         
@@ -283,6 +287,9 @@ def model(X_train, Y_train,
         # Do the training loop
         for epoch in range(num_epochs):
 
+            if epoch == 0:
+                start_time = time()
+                
             epoch_cost = 0.                       # Defines a cost related to an epoch
             num_minibatches = int(m / minibatch_size) # number of minibatches of size minibatch_size in the train set
             seed = seed + 1
@@ -299,11 +306,22 @@ def model(X_train, Y_train,
                 
                 epoch_cost += minibatch_cost / num_minibatches
 
-            # Print the cost every epoch
-            if print_cost == True and epoch % 100 == 0:
-                print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
+            # Print the cost every 100 epoch
+            if print_cost == True and (epoch+1) % 100 == 0:
+                duration = int(time() - start_time)
+                remain_epoch = num_epochs - epoch
+                remain_epoch_round = int(remain_epoch/100)
+                remain_time = remain_epoch_round*duration
+                remain_hour = int(remain_time/3600)
+                remain_minute = int((remain_time - remain_hour*3600) / 60)
+                remain_second = int(remain_time - remain_hour*3600 - remain_minute*60)
+                
+                print ("=======================================")
+                print ("Cost after %i epochs: %.5f" % (epoch+1, epoch_cost))
                 print ("Trainning set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
                 print ("Validation set rmse:", rmse.eval({X: X_valid, Y: Y_valid, phase:False}))
+                print ("Remaining time: %d:%d:%d \n" % (remain_hour, remain_minute, remain_second))
+                start_time = time()
                 
             if print_cost == True and epoch % 5 == 0 and epoch > 300:
                 costs.append(epoch_cost)
@@ -320,9 +338,10 @@ def model(X_train, Y_train,
         print ("Parameters have been trained!")
 
         final_output = sess.run(output, feed_dict={X: X_test, phase: False})
+        print(final_output.shape)
         submission = pd.DataFrame({
-            "Id": X_test["Id"],
-            "SalePrice": final_output
+            "Id": np.arange(final_output.shape[1]),
+            "SalePrice": np.exp(final_output.reshape((final_output.shape[1],)))
         })
         submission.to_csv("submission.csv", encoding='utf-8', index=False)
         
