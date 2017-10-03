@@ -204,6 +204,8 @@ def random_mini_batches(X, Y, mini_batch_size = 64, seed = 0):
     return mini_batches
     
 def model(X_train, Y_train, 
+        X_valid, Y_valid,
+        X_test,
         learning_rate = 0.01,
         num_epochs = 1500, 
         minibatch_size = 32, 
@@ -300,7 +302,8 @@ def model(X_train, Y_train,
             # Print the cost every epoch
             if print_cost == True and epoch % 100 == 0:
                 print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
-                print ("Training set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
+                print ("Trainning set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
+                print ("Validation set rmse:", rmse.eval({X: X_valid, Y: Y_valid, phase:False}))
                 
             if print_cost == True and epoch % 5 == 0 and epoch > 300:
                 costs.append(epoch_cost)
@@ -316,6 +319,11 @@ def model(X_train, Y_train,
         parameters = sess.run(parameters)
         print ("Parameters have been trained!")
 
-        #print ("Test RMSE:", rmse.eval({X: X_test, Y: Y_test}))
+        final_output = sess.run(output, feed_dict={X: X_test, phase: False})
+        submission = pd.DataFrame({
+            "Id": X_test["Id"],
+            "SalePrice": final_output
+        })
+        submission.to_csv("submission.csv", encoding='utf-8', index=False)
         
         return parameters
