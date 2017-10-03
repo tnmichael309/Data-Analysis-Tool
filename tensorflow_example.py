@@ -4,7 +4,43 @@ import h5py
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.python.framework import ops
+from IPython.display import clear_output, Image, display, HTML
 
+def strip_consts(graph_def, max_const_size=32):
+    """Strip large constant values from graph_def."""
+    strip_def = tf.GraphDef()
+    for n0 in graph_def.node:
+        n = strip_def.node.add() 
+        n.MergeFrom(n0)
+        if n.op == 'Const':
+            tensor = n.attr['value'].tensor
+            size = len(tensor.tensor_content)
+            if size > max_const_size:
+                tensor.tensor_content = "<stripped %d bytes>"%size
+    return strip_def
+
+def show_graph(graph_def, max_const_size=32):
+    """Visualize TensorFlow graph."""
+    if hasattr(graph_def, 'as_graph_def'):
+        graph_def = graph_def.as_graph_def()
+    strip_def = strip_consts(graph_def, max_const_size=max_const_size)
+    code = """
+        <script>
+          function load() {{
+            document.getElementById("{id}").pbtxt = {data};
+          }}
+        </script>
+        <link rel="import" href="https://tensorboard.appspot.com/tf-graph-basic.build.html" onload=load()>
+        <div style="height:600px">
+          <tf-graph-basic id="{id}"></tf-graph-basic>
+        </div>
+    """.format(data=repr(str(strip_def)), id='graph'+str(np.random.rand()))
+
+    iframe = """
+        <iframe seamless style="width:1200px;height:620px;border:0" srcdoc="{}"></iframe>
+    """.format(code.replace('"', '&quot;'))
+    display(HTML(iframe))
+    
 def create_placeholders(n_x, n_y):
     """
     Creates the placeholders for the tensorflow session.
@@ -22,31 +58,15 @@ def create_placeholders(n_x, n_y):
       In fact, the number of examples during test/train is different.
     """
 
-    ### START CODE HERE ### (approx. 2 lines)
     X = tf.placeholder(tf.float32, shape=(n_x, None), name='X')
     Y = tf.placeholder(tf.float32, shape=(n_y, None), name='Y')
-    ### END CODE HERE ###
+    phase = tf.placeholder(tf.bool, name='phase')
     
-    return X, Y
+    return X, Y, phase
 
 def initialize_parameters( n_feature, n_output,
-    layer_count = 3, hidder_neuron = [25, 12]):
-    """
-    Initializes parameters to build a neural network with tensorflow. The shapes are:
-                        W1 : [25, 12288]
-                        b1 : [25, 1]
-                        W2 : [12, 25]
-                        b2 : [12, 1]
-                        W3 : [6, 12]
-                        b3 : [6, 1]
-
-    Returns:
-    parameters -- a dictionary of tensors containing W1, b1, W2, b2, W3, b3
-    """
-
-    tf.set_random_seed(1)                   # so that your "random" numbers match ours
-        
-    ### START CODE HERE ### (approx. 6 lines of code)
+    layer_count = 3, hidden_neuron = [25, 12]):
+       
     W = []
     b = []
 
@@ -55,32 +75,17 @@ def initialize_parameters( n_feature, n_output,
         bias_str = 'b'+str(i+1)
 
         if i == 0:
-            weight = tf.get_variable(weight_str, [hidder_neuron[i], n_feature], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
-            bias = tf.get_variable(bias_str, [hidder_neuron[i], 1], initializer = tf.zeros_initializer())
+            weight = tf.get_variable(weight_str, [hidden_neuron[i], n_feature], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
+            bias = tf.get_variable(bias_str, [hidden_neuron[i], 1], initializer = tf.zeros_initializer())
         elif i == layer_count - 1:
-            weight = tf.get_variable(weight_str, [n_output, hidder_neuron[i-1]], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
+            weight = tf.get_variable(weight_str, [n_output, hidden_neuron[i-1]], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
             bias = tf.get_variable(bias_str, [n_output, 1], initializer = tf.zeros_initializer())
         else:
-            weight = tf.get_variable(weight_str, [hidder_neuron[i], hidder_neuron[i-1]], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
-            bias = tf.get_variable(bias_str, [hidder_neuron[i], 1], initializer = tf.zeros_initializer())
+            weight = tf.get_variable(weight_str, [hidden_neuron[i], hidden_neuron[i-1]], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
+            bias = tf.get_variable(bias_str, [hidden_neuron[i], 1], initializer = tf.zeros_initializer())
             
         W.append(weight)
         b.append(bias)
-
-    #W1 = tf.get_variable("W1", [25,12288], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
-    #b1 = tf.get_variable("b1", [25,1], initializer = tf.zeros_initializer())
-    #W2 = tf.get_variable("W2", [12,25], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
-    #b2 = tf.get_variable("b2", [12,1], initializer = tf.zeros_initializer())
-    #W3 = tf.get_variable("W3", [6,12], initializer = tf.contrib.layers.xavier_initializer(seed = 1))
-    #b3 = tf.get_variable("b3", [6,1], initializer = tf.zeros_initializer())
-    ### END CODE HERE ###
-
-    #parameters = {"W1": W1,
-    #              "b1": b1,
-    #              "W2": W2,
-    #              "b2": b2,
-    #              "W3": W3,
-    #              "b3": b3}
 
     parameters = {
         'W': W,
@@ -88,84 +93,75 @@ def initialize_parameters( n_feature, n_output,
     }
 
     return parameters
-        
-def forward_propagation(X, parameters, is_training=True):
-    """
-    Implements the forward propagation for the model: LINEAR -> RELU -> LINEAR -> RELU -> LINEAR -> SOFTMAX
-    
-    Arguments:
-    X -- input dataset placeholder, of shape (input size, number of examples)
-    parameters -- python dictionary containing your parameters "W1", "b1", "W2", "b2", "W3", "b3"
-                  the shapes are given in initialize_parameters
 
-    Returns:
-    Z3 -- the output of the last LINEAR unit
+def batch_norm(x, n_out, phase_train):
     """
-    '''
-    # Retrieve the parameters from the dictionary "parameters" 
-    W1 = parameters['W1']
-    b1 = parameters['b1']
-    W2 = parameters['W2']
-    b2 = parameters['b2']
-    W3 = parameters['W3']
-    b3 = parameters['b3']
+    Batch normalization on convolutional maps.
+    Ref.: http://stackoverflow.com/questions/33949786/how-could-i-use-batch-normalization-in-tensorflow
+    Args:
+        x:           Tensor, 4D BHWD input maps
+        n_out:       integer, depth of input maps
+        phase_train: boolean tf.Varialbe, true indicates training phase
+        scope:       string, variable scope
+    Return:
+        normed:      batch-normalized maps
+    """
+    with tf.variable_scope('bn'):
+        beta = tf.Variable(tf.constant(0.0, shape=[n_out]),
+                                     name='beta', trainable=True)
+        gamma = tf.Variable(tf.constant(1.0, shape=[n_out]),
+                                      name='gamma', trainable=True)
+        batch_mean, batch_var = tf.nn.moments(x, [0], name='moments')
+        ema = tf.train.ExponentialMovingAverage(decay=0.5)
+
+        def mean_var_with_update():
+            ema_apply_op = ema.apply([batch_mean, batch_var])
+            with tf.control_dependencies([ema_apply_op]):
+                return tf.identity(batch_mean), tf.identity(batch_var)
+
+        mean, var = tf.cond(phase_train,
+                            mean_var_with_update,
+                            lambda: (ema.average(batch_mean), ema.average(batch_var)))
+        normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
+    return normed
     
-    ### START CODE HERE ### (approx. 5 lines)              # Numpy Equivalents:
-    Z1 = tf.matmul(W1, X) + b1                                              # Z1 = np.dot(W1, X) + b1
-    A1 = tf.nn.relu(Z1)                                              # A1 = relu(Z1)
-    Z2 = tf.matmul(W2, A1) + b2                                              # Z2 = np.dot(W2, a1) + b2
-    A2 = tf.nn.relu(Z2)                                              # A2 = relu(Z2)
-    Z3 = tf.matmul(W3, A2) + b3                                              # Z3 = np.dot(W3,Z2) + b3
-    ### END CODE HERE ###
-    '''
+def forward_propagation(X, parameters, is_training):
 
     W = parameters['W']
     b = parameters['b']
-
-    outputs = None
-    activation = None
-
+    
     for i in range(len(W)):
         weight = W[i]
         bias = b[i]
-        if i == 0:
-            output = tf.matmul(weight, X) + bias
-            #output.set_shape([None, len(weight)])
-            #output = tf.contrib.layers.batch_norm(output, center=True, scale=True, is_training=is_training, scope='bn')
-            activation = tf.nn.relu(output)
-        elif i == len(W)-1:
-            output = tf.matmul(weight, activation) + bias
-        else:
-            output = tf.matmul(weight, activation) + bias
-            #output.set_shape([None, len(weight)])
-            #output = tf.contrib.layers.batch_norm(output, center=True, scale=True, is_training=is_training, scope='bn')
-            activation = tf.nn.relu(output)
+        scope = 'layer' + str(i+1)
+        with tf.variable_scope(scope):
+            if i == 0:
+                output = tf.matmul(weight, X) + bias
+                output = tf.transpose(output, name='transpose_to')
+                output = batch_norm(output, output.get_shape()[1], is_training)
+                output = tf.transpose(output, name='transpose_back')
+                activation = tf.nn.relu(output)
+            elif i == len(W)-1:
+                output = tf.matmul(weight, activation) + bias
+            else:
+                output = tf.matmul(weight, activation) + bias
+                output = tf.transpose(output, name='transpose_to')
+                output = batch_norm(output, output.get_shape()[1], is_training)
+                output = tf.transpose(output, name='transpose_back')
+                activation = tf.nn.relu(output)
 
     return output
 
 def compute_cost(parameters, output, Y):
-    """
-    Computes the cost
-    
-    Arguments:
-    Z3 -- output of forward propagation (output of the last LINEAR unit), of shape (6, number of examples)
-    Y -- "true" labels vector placeholder, same shape as Z3
-    
-    Returns:
-    cost - Tensor of the cost function
-    """
-    '''
-    # to fit the tensorflow requirement for tf.nn.softmax_cross_entropy_with_logits(...,...)
-    logits = tf.transpose(Z3)
-    labels = tf.transpose(Y)
-    '''
-    ### START CODE HERE ### (1 line of code)
-    loss = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(Y, output))))
-    for w in parameters['W']:
-        loss = loss + 0.01*tf.nn.l2_loss(w)
-    ### END CODE HERE ###
-    
-    return loss
+
+    with tf.name_scope('loss'):
+        loss = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(Y, output))))
+        for w in parameters['W']:
+            loss = loss + 0.01*tf.nn.l2_loss(w)
+        
+        return loss
+        
+    raise ValueError('Cannot enter scope \"loss \"')
     
 def random_mini_batches(X, Y, mini_batch_size = 64, seed = 0):
     """
@@ -207,8 +203,13 @@ def random_mini_batches(X, Y, mini_batch_size = 64, seed = 0):
     
     return mini_batches
     
-def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
-          num_epochs = 1500, minibatch_size = 32, print_cost = True, layer_count = 3, hidder_neuron = [25, 12]):
+def model(X_train, Y_train, 
+        learning_rate = 0.01,
+        num_epochs = 1500, 
+        minibatch_size = 32, 
+        print_cost = True, 
+        layer_count = 3, 
+        hidden_neuron = [25, 12]):
     """
     Implements a three-layer tensorflow neural network: LINEAR->RELU->LINEAR->RELU->LINEAR->SOFTMAX.
     
@@ -234,29 +235,20 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
     costs = []                                        # To keep track of the cost
     
     # Create Placeholders of shape (n_x, n_y)
-    ### START CODE HERE ### (1 line)
-    X, Y = create_placeholders(n_x, n_y)
-    ### END CODE HERE ###
+    X, Y, phase = create_placeholders(n_x, n_y)
 
     # Initialize parameters
-    ### START CODE HERE ### (1 line)
     # n_feature, n_output,
     # layer_count = 3, hidder_neuron = [25, 12]
-    parameters = initialize_parameters(n_x, n_y, layer_count = layer_count, hidder_neuron = hidder_neuron)
-    ### END CODE HERE ###
+    parameters = initialize_parameters(n_x, n_y, layer_count = layer_count, hidden_neuron = hidden_neuron)
     
     # Forward propagation: Build the forward propagation in the tensorflow graph
-    ### START CODE HERE ### (1 line)
-    output = forward_propagation(X, parameters, is_training)
-    ### END CODE HERE ###
+    output = forward_propagation(X, parameters, phase)
     
     # Cost function: Add cost function to tensorflow graph
-    ### START CODE HERE ### (1 line)
     cost = compute_cost(parameters, output, Y)
-    ### END CODE HERE ###
     
     # Backpropagation: Define the tensorflow optimizer. Use an AdamOptimizer.
-    ### START CODE HERE ### (1 line)
     global_step = tf.Variable(0, trainable=False)
     online_learning_rate = tf.train.exponential_decay(learning_rate, global_step,
                                            10000, 0.95, staircase=True)
@@ -267,13 +259,21 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
     with tf.control_dependencies(update_ops):                                       
         optimizer = tf.train.AdamOptimizer(learning_rate = online_learning_rate).minimize(cost, global_step=global_step)
-    
-    
+      
     # Initialize all the variables
     init = tf.global_variables_initializer()
 
+    # show graph
+    show_graph(tf.get_default_graph().as_graph_def())
+    
+    # Calculate the correct predictions
+    rmse = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(Y, output))))
+
+    # Calculate accuracy on the test set
+    rmse = tf.cast(rmse, "float")
+    
     # Start the session to compute the tensorflow graph
-    with tf.Session() as sess:
+    with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
         
         # Run the initialization
         sess.run(init)
@@ -293,15 +293,15 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
                 
                 # IMPORTANT: The line that runs the graph on a minibatch.
                 # Run the session to execute the "optimizer" and the "cost", the feedict should contain a minibatch for (X,Y).
-                ### START CODE HERE ### (1 line)
-                _ , minibatch_cost = sess.run([optimizer, cost], feed_dict={X: minibatch_X, Y: minibatch_Y})
-                ### END CODE HERE ###
+                _ , minibatch_cost = sess.run([optimizer, cost], feed_dict={X: minibatch_X, Y: minibatch_Y, phase:True})
                 
                 epoch_cost += minibatch_cost / num_minibatches
 
             # Print the cost every epoch
             if print_cost == True and epoch % 100 == 0:
                 print ("Cost after epoch %i: %f" % (epoch, epoch_cost))
+                print ("Training set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
+                
             if print_cost == True and epoch % 5 == 0 and epoch > 300:
                 costs.append(epoch_cost)
                 
@@ -313,16 +313,9 @@ def model(X_train, Y_train, learning_rate = 0.01, is_training=True,
         plt.show()
 
         # lets save the parameters in a variable
-        # parameters = sess.run(parameters)
-        # print ("Parameters have been trained!")
+        parameters = sess.run(parameters)
+        print ("Parameters have been trained!")
 
-        # Calculate the correct predictions
-        rmse = tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(Y, output))))
-
-        # Calculate accuracy on the test set
-        rmse = tf.cast(rmse, "float")
-
-        print ("Train RMSE:", rmse.eval({X: X_train, Y: Y_train}))
         #print ("Test RMSE:", rmse.eval({X: X_test, Y: Y_test}))
         
-        #return parameters
+        return parameters
