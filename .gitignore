@@ -1,3 +1,7 @@
 __pycache__/dataframe_parallel_manager.cpython-36.pyc
 *.pyc
 test_info.dmp
+.ipynb_checkpoints/notebook-checkpoint.ipynb
+.ipynb_checkpoints/notebook-checkpoint.ipynb
+timeline.ctf.json
+submission.csv
