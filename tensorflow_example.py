@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow.python.framework import ops
 from IPython.display import clear_output, Image, display, HTML
+from tensorflow.python.client import timeline
 
 def strip_consts(graph_def, max_const_size=32):
     """Strip large constant values from graph_def."""
@@ -95,7 +96,7 @@ def initialize_parameters( n_feature, n_output,
 
     return parameters
 
-def batch_norm(x, n_out, phase_train):
+def batch_norm(x, n_out, phase_train, bn_decay_rate):
     """
     Batch normalization on convolutional maps.
     Ref.: http://stackoverflow.com/questions/33949786/how-could-i-use-batch-normalization-in-tensorflow
@@ -113,7 +114,7 @@ def batch_norm(x, n_out, phase_train):
         gamma = tf.Variable(tf.constant(1.0, shape=[n_out]),
                                       name='gamma', trainable=True)
         batch_mean, batch_var = tf.nn.moments(x, [0], name='moments')
-        ema = tf.train.ExponentialMovingAverage(decay=0.9)
+        ema = tf.train.ExponentialMovingAverage(decay=bn_decay_rate)
 
         def mean_var_with_update():
             ema_apply_op = ema.apply([batch_mean, batch_var])
@@ -126,7 +127,7 @@ def batch_norm(x, n_out, phase_train):
         normed = tf.nn.batch_normalization(x, mean, var, beta, gamma, 1e-3)
     return normed
     
-def forward_propagation(X, parameters, is_training):
+def forward_propagation(X, parameters, is_training, bn_decay_rate):
 
     W = parameters['W']
     b = parameters['b']
@@ -139,7 +140,7 @@ def forward_propagation(X, parameters, is_training):
             if i == 0:
                 output = tf.matmul(weight, X) + bias
                 output = tf.transpose(output, name='transpose_to')
-                output = batch_norm(output, output.get_shape()[1], is_training)
+                output = batch_norm(output, output.get_shape()[1], is_training, bn_decay_rate)
                 output = tf.transpose(output, name='transpose_back')
                 activation = tf.nn.relu(output)
             elif i == len(W)-1:
@@ -147,7 +148,7 @@ def forward_propagation(X, parameters, is_training):
             else:
                 output = tf.matmul(weight, activation) + bias
                 output = tf.transpose(output, name='transpose_to')
-                output = batch_norm(output, output.get_shape()[1], is_training)
+                output = batch_norm(output, output.get_shape()[1], is_training, bn_decay_rate)
                 output = tf.transpose(output, name='transpose_back')
                 activation = tf.nn.relu(output)
 
@@ -208,11 +209,15 @@ def model(X_train, Y_train,
         X_valid, Y_valid,
         X_test,
         learning_rate = 0.01,
+        lr_decay_step = 10000,
+        lr_decay_rate = 0.95,
+        bn_decay_rate = 0.9,
         num_epochs = 1500, 
         minibatch_size = 32, 
         print_cost = True, 
         layer_count = 3, 
-        hidden_neuron = [25, 12]):
+        hidden_neuron = [25, 12],
+        profiling = False):
     """
     Implements a three-layer tensorflow neural network: LINEAR->RELU->LINEAR->RELU->LINEAR->SOFTMAX.
     
@@ -246,7 +251,7 @@ def model(X_train, Y_train,
     parameters = initialize_parameters(n_x, n_y, layer_count = layer_count, hidden_neuron = hidden_neuron)
     
     # Forward propagation: Build the forward propagation in the tensorflow graph
-    output = forward_propagation(X, parameters, phase)
+    output = forward_propagation(X, parameters, phase, bn_decay_rate)
     
     # Cost function: Add cost function to tensorflow graph
     cost = compute_cost(parameters, output, Y)
@@ -254,7 +259,7 @@ def model(X_train, Y_train,
     # Backpropagation: Define the tensorflow optimizer. Use an AdamOptimizer.
     global_step = tf.Variable(0, trainable=False)
     online_learning_rate = tf.train.exponential_decay(learning_rate, global_step,
-                                           10000, 0.95, staircase=True)
+                                           lr_decay_step, lr_decay_rate, staircase=True)
     
     # Note: when training, the moving_mean and moving_variance need to be updated. 
     # By default the update ops are placed in tf.GraphKeys.UPDATE_OPS, 
@@ -280,69 +285,86 @@ def model(X_train, Y_train,
     
     # Start the session to compute the tensorflow graph
     with tf.Session(config=tf.ConfigProto(log_device_placement=True)) as sess:
-        
+            
         # Run the initialization
         sess.run(init)
         
-        # Do the training loop
-        for epoch in range(num_epochs):
-
-            if epoch == 0:
-                start_time = time()
-                
-            epoch_cost = 0.                       # Defines a cost related to an epoch
-            num_minibatches = int(m / minibatch_size) # number of minibatches of size minibatch_size in the train set
-            seed = seed + 1
-            minibatches = random_mini_batches(X_train, Y_train, minibatch_size, seed)
+        if profiling is True:
+            run_metadata = tf.RunMetadata()
+            _ , all_cost = sess.run([optimizer, cost], 
+                        feed_dict={X: X_train, Y: Y_train, phase:True},
+                        options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                        run_metadata=run_metadata)
+            trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+            trace_file = open('timeline.ctf.json', 'w')
+            trace_file.write(trace.generate_chrome_trace_format())
             
-            for minibatch in minibatches:
+        else:
+            # Do the training loop
+            for epoch in range(num_epochs):
 
-                # Select a minibatch
-                (minibatch_X, minibatch_Y) = minibatch
-                
-                # IMPORTANT: The line that runs the graph on a minibatch.
-                # Run the session to execute the "optimizer" and the "cost", the feedict should contain a minibatch for (X,Y).
-                _ , minibatch_cost = sess.run([optimizer, cost], feed_dict={X: minibatch_X, Y: minibatch_Y, phase:True})
-                
-                epoch_cost += minibatch_cost / num_minibatches
+                if epoch == 0:
+                    start_time = time()
 
-            # Print the cost every 100 epoch
-            if print_cost == True and (epoch+1) % 100 == 0:
-                duration = int(time() - start_time)
-                remain_epoch = num_epochs - epoch
-                remain_epoch_round = int(remain_epoch/100)
-                remain_time = remain_epoch_round*duration
-                remain_hour = int(remain_time/3600)
-                remain_minute = int((remain_time - remain_hour*3600) / 60)
-                remain_second = int(remain_time - remain_hour*3600 - remain_minute*60)
-                
-                print ("=======================================")
-                print ("Cost after %i epochs: %.5f" % (epoch+1, epoch_cost))
-                print ("Trainning set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
-                print ("Validation set rmse:", rmse.eval({X: X_valid, Y: Y_valid, phase:False}))
-                print ("Remaining time: %d:%d:%d \n" % (remain_hour, remain_minute, remain_second))
-                start_time = time()
-                
-            if print_cost == True and epoch % 5 == 0 and epoch > 300:
-                costs.append(epoch_cost)
-                
-        # plot the cost
-        plt.plot(np.squeeze(costs))
-        plt.ylabel('cost')
-        plt.xlabel('iterations (per tens)')
-        plt.title("Learning rate =" + str(learning_rate))
-        plt.show()
+                epoch_cost = 0.                       # Defines a cost related to an epoch
+                num_minibatches = int(m / minibatch_size) # number of minibatches of size minibatch_size in the train set
+                seed = seed + 1
+                minibatches = random_mini_batches(X_train, Y_train, minibatch_size, seed)
 
-        # lets save the parameters in a variable
-        parameters = sess.run(parameters)
-        print ("Parameters have been trained!")
+                for minibatch in minibatches:
 
-        final_output = sess.run(output, feed_dict={X: X_test, phase: False})
-        print(final_output.shape)
-        submission = pd.DataFrame({
-            "Id": np.arange(final_output.shape[1]),
-            "SalePrice": np.exp(final_output.reshape((final_output.shape[1],)))
-        })
-        submission.to_csv("submission.csv", encoding='utf-8', index=False)
-        
-        return parameters
+                    # Select a minibatch
+                    (minibatch_X, minibatch_Y) = minibatch
+
+                    # IMPORTANT: The line that runs the graph on a minibatch.
+                    # Run the session to execute the "optimizer" and the "cost", the feedict should contain a minibatch for (X,Y).
+                    if profiling is False:
+                        _ , minibatch_cost = sess.run([optimizer, cost], feed_dict={X: minibatch_X, Y: minibatch_Y, phase:True})
+                    else:
+                        _ , minibatch_cost = sess.run([optimizer, cost], 
+                            feed_dict={X: minibatch_X, Y: minibatch_Y, phase:True},
+                            options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                            run_metadata=run_metadata)
+
+                    epoch_cost += minibatch_cost / num_minibatches
+
+                # Print the cost every 100 epoch
+                if print_cost == True and (epoch+1) % 100 == 0:
+                    duration = int(time() - start_time)
+                    remain_epoch = num_epochs - epoch
+                    remain_epoch_round = int(remain_epoch/100)
+                    remain_time = remain_epoch_round*duration
+                    remain_hour = int(remain_time/3600)
+                    remain_minute = int((remain_time - remain_hour*3600) / 60)
+                    remain_second = int(remain_time - remain_hour*3600 - remain_minute*60)
+
+                    print ("=======================================")
+                    print ("Cost after %i epochs: %.5f" % (epoch+1, epoch_cost))
+                    print ("Trainning set rmse:", rmse.eval({X: X_train, Y: Y_train, phase:False}))
+                    print ("Validation set rmse:", rmse.eval({X: X_valid, Y: Y_valid, phase:False}))
+                    print ("Remaining time: %d:%d:%d \n" % (remain_hour, remain_minute, remain_second))
+                    start_time = time()
+
+                if print_cost == True and epoch % 5 == 0 and epoch > 300:
+                    costs.append(epoch_cost)
+
+            # plot the cost
+            plt.plot(np.squeeze(costs))
+            plt.ylabel('cost')
+            plt.xlabel('iterations (per tens)')
+            plt.title("Learning rate =" + str(learning_rate))
+            plt.show()
+
+            # lets save the parameters in a variable
+            parameters = sess.run(parameters)
+            print ("Parameters have been trained!")
+
+            final_output = sess.run(output, feed_dict={X: X_test, phase: False})
+            print(final_output.shape)
+            submission = pd.DataFrame({
+                "Id": np.arange(final_output.shape[1]),
+                "SalePrice": np.exp(final_output.reshape((final_output.shape[1],)))
+            })
+            submission.to_csv("submission.csv", encoding='utf-8', index=False)
+
+            return parameters
